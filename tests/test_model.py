@@ -87,3 +87,59 @@ def test_higher_pressure_increases_h2_sat():
     low_p_params = build_params({'h2_pressure': 1.0, 'h2_sat': h2_saturation(1.0, p.H2_SAT_BASE)})
     high_p_params = build_params({'h2_pressure': 6.0, 'h2_sat': h2_saturation(6.0, p.H2_SAT_BASE)})
     assert high_p_params['h2_sat'] > low_p_params['h2_sat']
+
+
+def test_concentrations_never_negative():
+    """Species concentrations should never go negative throughout the simulation."""
+    params = build_params()
+    sol = run_simulation(params)
+    assert np.all(sol.y[0] >= -1e-9), "A went negative"
+    assert np.all(sol.y[1] >= -1e-9), "B went negative"
+    assert np.all(sol.y[2] >= -1e-9), "C went negative"
+    assert np.all(sol.y[3] >= -1e-9), "H2 went negative"
+
+
+def test_higher_k2_increases_impurity():
+    """Higher side reaction rate constant should produce more impurity."""
+    base_params = build_params()
+    high_k2_params = build_params({'k2': 0.05})
+    base_sol = run_simulation(base_params)
+    high_k2_sol = run_simulation(high_k2_params)
+    base_metrics = compute_metrics(base_sol, base_params)
+    high_k2_metrics = compute_metrics(high_k2_sol, high_k2_params)
+    assert high_k2_metrics['impurity_fraction'] > base_metrics['impurity_fraction']
+
+
+def test_higher_kla_reduces_h2_limitation():
+    """Better mass transfer (higher kLa) should reduce time spent H2-limited."""
+    low_kla_params = build_params({'kla': 0.2})
+    high_kla_params = build_params({'kla': 2.0})
+    low_sol = run_simulation(low_kla_params)
+    high_sol = run_simulation(high_kla_params)
+    low_metrics = compute_metrics(low_sol, low_kla_params)
+    high_metrics = compute_metrics(high_sol, high_kla_params)
+    assert high_metrics['time_h2_limited_fraction'] <= low_metrics['time_h2_limited_fraction']
+
+
+def test_molar_mass_balance():
+    """Total moles of A fed should approximately equal moles of A remaining plus B plus C."""
+    params = build_params()
+    sol = run_simulation(params)
+    A, B, C, H2, V = sol.y
+    total_a_fed = params['feed_rate'] * params['feed_conc_a'] * sol.t[-1]
+    moles_accounted = A[-1] * V[-1] + B[-1] * V[-1] + C[-1] * V[-1]
+    # Allow 2% tolerance for numerical integration error
+    assert abs(moles_accounted - total_a_fed) / total_a_fed < 0.02
+
+
+def test_impurity_fraction_increases_over_time():
+    """Impurity fraction C/(B+C) should increase as the batch proceeds and A depletes."""
+    params = build_params()
+    sol = run_simulation(params)
+    B, C, V = sol.y[1], sol.y[2], sol.y[4]
+    total_prod = (B + C) * V
+    impurity = np.where(total_prod > 1e-9, C * V / total_prod, 0.0)
+    # Impurity in the second half of the batch should exceed impurity in the first quarter
+    quarter = len(sol.t) // 4
+    half = len(sol.t) // 2
+    assert np.mean(impurity[half:]) > np.mean(impurity[1:quarter])

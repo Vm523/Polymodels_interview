@@ -43,10 +43,21 @@ def compute_metrics(sol, params):
     selectivity = moles_b / (total_product + 1e-12)
     impurity_fraction = moles_c / (total_product + 1e-12)
 
-    min_h2 = float(np.min(H2))
+    startup_mask = sol.t > 5.0
+    min_h2 = float(np.min(H2[startup_mask])) if np.any(startup_mask) else float(np.min(H2))
     threshold = params.get('h2_lim_threshold', 0.01)
     dt = np.diff(t)
     time_h2_limited = float(np.sum(dt[H2[:-1] < threshold])) / t[-1]
+
+    total_a_fed_t = params['feed_rate'] * params['feed_conc_a'] * t
+    moles_a_remaining_t = A * V
+    conv_t = 1.0 - moles_a_remaining_t / (total_a_fed_t + 1e-12)
+    conv_t = np.clip(conv_t, 0.0, 1.0)
+    target = params.get('conversion_target', 0.95)
+    # Exclude t=0 where conv=1.0 trivially (nothing fed yet, 0/0 -> 1.0 via 1e-12 guard)
+    meaningful = t > 1.0
+    indices = np.where(meaningful & (conv_t >= target))[0]
+    time_to_target = float(t[indices[0]]) if len(indices) > 0 else float(t[-1])
 
     return {
         'conversion': conversion,
@@ -54,11 +65,33 @@ def compute_metrics(sol, params):
         'impurity_fraction': impurity_fraction,
         'min_h2': min_h2,
         'time_h2_limited_fraction': time_h2_limited,
+        'time_to_target_conversion': time_to_target,
     }
 
 
 def risk_score(metrics, params):
-    """Return 'Low', 'Medium', or 'High' risk rating based on process metrics."""
+    """Return 'Low', 'Medium', or 'High' risk rating based on process metrics.
+
+    Scoring system (higher score = higher risk):
+
+    Conversion (vs conversion_target, default 0.95):
+      - Below target:       +2 pts
+      - Below 99% but ok:   +1 pt
+
+    Impurity fraction C/(B+C) (vs impurity_threshold, default 0.05):
+      - Above 15%:          +3 pts
+      - Above threshold:    +2 pts
+      - Above 2%:           +1 pt
+
+    H2 limitation (fraction of batch time with H2 below h2_lim_threshold):
+      - Above 30% of batch: +2 pts
+      - Above 10% of batch: +1 pt
+
+    Final rating:
+      - Score <= 1:  Low
+      - Score <= 3:  Medium
+      - Score >= 4:  High
+    """
     score = 0
 
     if metrics['conversion'] < params.get('conversion_target', 0.95):
