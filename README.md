@@ -1,107 +1,96 @@
 # Fed-Batch Hydrogenation Process Model
 
-## What this is
+## What I built and why
 
-This is a Python-based ODE model of a fed-batch catalytic hydrogenation reactor, built as part of a technical interview project demonstrating how process modelling fits into pharmaceutical CMC development. The motivation was to show that you can use relatively simple mechanistic models to do meaningful technical risk assessment — identifying critical process parameters and scale-up concerns before you commit lab time. It's the kind of analysis that would sit naturally in an early-phase CMC package or a design space justification under ICH Q8.
+I built a Python ODE model of a fed-batch catalytic hydrogenation reactor as a technical interview project. The goal was to show how process modelling can support pharmaceutical CMC development — specifically, how you can use a relatively simple mechanistic model to do meaningful technical risk assessment before committing any lab time. I wanted to identify which parameters actually matter, what the scale-up risks are, and whether the process has a wide enough operating window to be manufacturable.
 
-## What is fed-batch hydrogenation?
+The context is ICH Q8 design space thinking: rather than just optimising a single set of conditions, I wanted to map out which combinations of operating parameters give acceptable conversion and purity — and which ones don't.
 
-Catalytic hydrogenation is one of the most common transformations in API synthesis — reducing a nitro group, saturating a double bond, removing a protecting group. In a batch process you charge everything at once; in fed-batch you add the substrate gradually to a reactor that already contains solvent, catalyst, and hydrogen. The reason to go fed-batch is control: you limit the instantaneous substrate concentration, which helps manage hydrogen demand, reaction exotherm, and selectivity. For a reduction where over-hydrogenation is a real impurity pathway, keeping the substrate lean can meaningfully improve the product ratio.
+## Why fed-batch hydrogenation?
 
-The interesting engineering challenge is hydrogen mass transfer. H2 is a gas dissolving into a liquid, and its transfer rate is governed by kLa (the volumetric mass transfer coefficient). At lab scale, kLa is usually not limiting. At pilot or manufacturing scale, the mass transfer rate per unit volume tends to drop because the geometry changes and you can't just scale up agitator speed proportionally. This is one of the most common reasons a hydrogenation that looks clean on the bench performs poorly at scale — the liquid-phase H2 concentration drops, the reaction slows, and you either get incomplete conversion or the selectivity shifts. The model is specifically designed to probe this.
+Catalytic hydrogenation is one of the most common steps in API synthesis — reducing a nitro group, saturating a double bond, removing a protecting group. In a standard batch you charge everything at once; in fed-batch you add the substrate gradually to a reactor that already contains solvent, catalyst, and hydrogen. I chose fed-batch because the control element makes it more interesting to model: you're managing hydrogen demand, exotherm, and selectivity simultaneously through the feed profile.
 
-## Model description
+The engineering challenge that motivated the whole project is hydrogen mass transfer. H2 has to dissolve from the gas phase into the liquid before it can react, and that transfer rate — characterised by kLa — is the main thing that changes when you scale up. At lab scale kLa is usually fine. At manufacturing scale it can drop 3–10x because the geometry changes and you can't just increase agitation proportionally. That's one of the most common reasons a hydrogenation that looks clean on the bench fails at scale — the dissolved H2 drops, the reaction slows, and you get incomplete conversion or the selectivity shifts. I built the model specifically to quantify that risk.
 
-The system is described by five state variables integrated over the batch time:
+## What the model does
 
-- **A** — substrate concentration (mol/L). This is what you're adding in the feed and what you want to consume completely.
-- **B** — desired product concentration (mol/L). The target molecule; you want this as high as possible.
-- **C** — impurity concentration (mol/L). The over-hydrogenated side product. Tracking this is important because it determines whether you'll hit purity spec.
-- **H2** — dissolved hydrogen concentration (mol/L). The key variable for understanding mass-transfer limitations. When this is low, the reaction is H2-starved.
-- **V** — reactor volume (L). Volume increases as feed is added, so you need to carry it as a state to correctly compute dilution of all other species.
+I tracked five state variables over the batch time:
 
-Two reactions are modelled:
+- **A** — substrate concentration (mol/L): what I'm feeding in and want to consume completely
+- **B** — desired product (mol/L): the target molecule
+- **C** — impurity (mol/L): over-hydrogenated side product that determines whether I hit purity spec
+- **H2** — dissolved hydrogen (mol/L): the key variable for understanding mass-transfer limitation
+- **V** — reactor volume (L): increases as feed is added, needed to get dilution terms right
 
-```
-A + H2 → B    rate = k1 * A * H2   (desired hydrogenation)
-B + H2 → C    rate = k2 * B * H2   (over-hydrogenation, side reaction)
-```
-
-Both are second-order (first order in substrate, first order in dissolved H2). This is a simplification — real heterogeneous hydrogenation kinetics are usually Langmuir-Hinshelwood, with catalyst surface coverage playing a role — but for the purpose of parameter sensitivity and risk screening it captures the essential behaviour.
-
-Hydrogen mass transfer into the liquid is modelled as:
+I modelled two reactions:
 
 ```
-r_transfer = kLa * (H2_sat - H2)
+A + H2 → B    rate = k1 × A × H2   (desired hydrogenation)
+B + H2 → C    rate = k2 × B × H2   (over-hydrogenation, side reaction)
 ```
 
-where H2_sat is the saturation concentration at the reactor headspace pressure, calculated via a simplified Henry's law (linear relationship with partial pressure). The transfer term drives dissolved H2 toward equilibrium; when the reaction is fast relative to transfer, H2 stays depleted and you're in the mass-transfer-limited regime.
+Both are second-order — first order in substrate, first order in dissolved H2. I used simplified Langmuir-Hinshelwood kinetics (which reduces to second-order when the catalyst surface isn't saturated), which I think is reasonable for a screening model.
 
-Fed-batch dilution terms are included throughout — as volume increases, all concentrations are diluted proportionally, which is important for getting the timing of the selectivity right. The substrate feed is modelled as a constant volumetric flow rate running for the full batch duration.
+I modelled hydrogen mass transfer as:
 
-The ODEs are solved using `scipy.integrate.solve_ivp` with the Radau solver. Radau is an implicit Runge-Kutta method suited to stiff systems, which this one becomes when kLa is high relative to the reaction rate constants — the H2 dynamics then have a very short timescale compared to the conversion dynamics, and explicit solvers struggle.
+```
+r_transfer = kLa × (H2_sat − H2)
+```
 
-## Assumptions
+where H2_sat comes from a simplified Henry's law (linear with headspace pressure). When the reaction is fast relative to transfer, H2 stays depleted and I'm in the mass-transfer-limited regime — which is exactly the scale-up risk I wanted to quantify.
 
-There are several simplifying assumptions worth being honest about:
+I solved the ODEs with `scipy.integrate.solve_ivp` using the Radau solver. I chose Radau rather than RK45 because the system is stiff when kLa is high — the H2 dynamics have a much shorter timescale than the conversion dynamics, and explicit solvers take tiny steps trying to stay stable.
 
-- **Perfectly mixed reactor.** No spatial gradients in concentration. In reality, a large stirred tank will have zones of varying H2 availability, especially near the gas sparger versus away from it.
-- **Isothermal operation.** Temperature is assumed constant throughout. This means any temperature dependence of k1 and k2 is absorbed into fixed constants. If the reaction is significantly exothermic and cooling is imperfect, the real rate constants would drift during the batch.
-- **Simplified Henry's law for H2 solubility.** H2_sat is a linear function of headspace pressure. This is reasonable at moderate pressures but ignores solvent effects and non-ideal gas behaviour.
-- **Second-order kinetics.** As noted above, real heterogeneous hydrogenation typically follows Langmuir-Hinshelwood kinetics with explicit catalyst surface terms. The second-order approximation works reasonably well when the catalyst is not saturated, but it will overestimate the rate at high H2.
-- **No catalyst deactivation.** Catalyst activity is assumed constant throughout the batch. In practice, poisoning and sintering do happen, particularly over longer batches or with feeds that contain trace impurities.
-- **Constant H2 headspace pressure.** The model assumes an infinite H2 reservoir at fixed pressure. Gas-phase H2 depletion is not tracked, which would matter in a closed system with limited headspace volume.
-- **Feed runs continuously for the full batch time.** The substrate feed rate is constant from t=0 to t=t_end. There's no provision for variable feed profiles, which is a real tool in optimising selectivity.
+## Assumptions I made
+
+I tried to be honest about where I simplified:
+
+- **Perfectly mixed reactor.** No spatial concentration gradients. In a real large stirred tank there will be zones of varying H2 availability, particularly near the sparger.
+- **Isothermal operation.** I absorbed temperature dependence into fixed rate constants. For an exothermic reaction this is a significant simplification — if cooling is imperfect, k1 and k2 would drift during the batch.
+- **Simplified Henry's law.** H2_sat scales linearly with pressure. This ignores solvent effects and non-ideal gas behaviour, which matters in organic solvents.
+- **Second-order kinetics.** A full Langmuir-Hinshelwood model with explicit surface coverage would be more accurate at high catalyst loadings, but for parameter sensitivity screening I think second-order captures the main behaviour.
+- **No catalyst deactivation.** Catalyst activity is constant throughout. Poisoning and sintering do happen in practice, particularly with dirty feeds.
+- **Constant H2 headspace pressure.** I assumed an infinite H2 reservoir. Gas-phase H2 depletion in a closed headspace would matter in a sealed system.
+- **Constant feed rate for the full batch.** There's no variable feed profile. In reality, tapering the feed rate at the end to reduce over-hydrogenation is a real process lever.
 
 ## How to run
 
-Install the dependencies:
-
 ```
 pip install -r requirements.txt
-```
 
-Then you can run each component separately:
-
-```
-python src/simulate.py        # base-case simulation, generates plots and CSV
-python src/scenarios.py       # compare base case vs. low kLa and high catalyst scenarios
-python src/sensitivity.py     # one-at-a-time parameter sensitivity sweeps
+python src/simulate.py        # base-case simulation — plots and CSV
+python src/scenarios.py       # scenario comparison and design space analysis
+python src/sensitivity.py     # one-at-a-time parameter sweeps
 python src/risk_assessment.py # risk scoring across all scenarios
-pytest tests -q               # run the unit tests
+
+pytest tests -q               # 16 unit tests
 ```
 
-Plots are saved to `results/figures/` and CSV outputs to `results/`.
+Plots save to `results/figures/` and data to `results/`.
 
-## Key results
+## What I found
 
-The base case gives around 96% conversion with about 5% impurity and comes out as Medium risk — a reasonable starting point that you'd want to improve before going into manufacturing.
+The base case gives around 96% conversion with about 5% impurity — Medium risk. That's a reasonable starting point but not something I'd be comfortable taking straight to manufacturing.
 
-The more interesting results come from the scenarios. The low kLa case (halving the mass transfer coefficient to simulate a scale-up with worse gas dispersion) drops conversion to 87.6%, with 100% of the process flagged as H2-limited. This is the high-risk outcome and the one that corresponds most directly to a real scale-up failure mode. The sensitivity analysis confirms that kLa is the most influential parameter in the model — more so than the feed rate or the rate constants — which points to agitation and sparger design as the primary engineering controls to get right.
+The more important results came from the scenario analysis. When I dropped kLa to 0.2 /min — simulating a scale-up where gas dispersion is worse — conversion fell to 87.6% and the process was H2-limited for 100% of the batch. That's the High risk outcome and the one that most directly maps to a real scale-up failure. The sensitivity analysis confirmed that kLa is the dominant parameter, more so than feed rate or catalyst loading.
 
-The high catalyst loading scenario is also instructive: conversion goes up to 97.7%, but impurity climbs to 26.6% because the faster reaction consumes dissolved H2 more aggressively and drives the selectivity toward over-hydrogenation. It scores High risk for a different reason than the low kLa case, which is a good example of why you need to look at both conversion and purity together.
+The high catalyst scenario was also telling: conversion went up to 97.7%, but impurity climbed to 26.6%. The faster reaction consumed A quickly, so the B/A ratio in the reactor rose earlier in the batch and the over-hydrogenation side reaction dominated. Same risk rating as the low kLa case but for a completely different reason — which is why I thought it was important to track both conversion and selectivity simultaneously.
 
-## How this supports risk assessment
+I also added a design space analysis — a 2D grid of kLa versus feed rate showing which combinations give acceptable performance. The acceptable operating region shrinks rapidly below kLa ≈ 0.4 /min, which is the key number for a scale-up engineer to care about.
 
-The framing here maps to CMC and ICH Q8 design space thinking. Before you go into the lab, you want to know which process parameters are most likely to cause a failure — not just optimistically, but quantitatively. By running the model across a parameter space (kLa, feed rate, catalyst loading, rate constants), you get a structured picture of the process sensitivity that can directly inform the control strategy. It helps prioritise what to measure, what tolerances to put on operating parameters, and where to focus scale-up characterisation work.
+## How this supports CMC decisions
 
-It's not a substitute for experimental data, but it's much faster to run 50 model scenarios than 50 lab experiments, and if the model is honest about its assumptions, the results are genuinely useful for technical risk conversations.
+The main value I see in this kind of model is prioritisation. Before going into the lab, you want to know which parameters are most likely to cause a failure — not just optimistically, but with some quantitative backing. The model lets me say "kLa is the critical parameter, here's what happens below 0.4 /min, here's the acceptable operating window" — and that directly informs what measurements to take, what tolerances to put on operating parameters, and where to focus scale-up characterisation.
 
-## Limitations
+It maps naturally to ICH Q8 design space justification: I can show a region of parameter space where the CQAs are met, and explain what drives the boundaries of that region.
 
-The main limitations to be aware of:
+It's not a substitute for experimental data — I need lab runs to validate k1, k2, and kLa for the actual substrate — but it's faster than 50 experiments and it structures the conversation about risk.
 
-- **Kinetics are simplified.** Langmuir-Hinshelwood kinetics with explicit catalyst surface terms would be more physically accurate, particularly at high catalyst loadings where surface saturation matters.
-- **No temperature dependence.** There's no Arrhenius equation for k1 and k2. For a real exothermic hydrogenation, temperature excursions during the batch could meaningfully change the selectivity.
-- **Gas phase H2 depletion not tracked.** In a sealed system or one with limited H2 supply, headspace pressure would drop as H2 is consumed. The model assumes it stays constant.
-- **Catalyst deactivation is ignored.** This is probably fine for a short batch with clean feed, but for longer processes or feeds with potential poisons it's a real gap.
-- **No spatial mixing effects.** The perfectly-mixed assumption means the model can't capture the concentration gradients you actually see in large stirred tanks.
+## Limitations and what I'd do next
 
-## Possible improvements
+The biggest gaps are:
 
-Four improvements that would make this genuinely more useful:
-
-1. **Arrhenius temperature dependence.** Add `k1(T) = A1 * exp(-Ea1/RT)` and similarly for k2, and include an energy balance. This would let you model the interplay between cooling capacity and selectivity.
-2. **Monte Carlo sensitivity analysis.** The current one-at-a-time sweeps are a useful starting point but don't capture parameter interactions. Sampling from distributions over all uncertain parameters simultaneously would give a more complete picture of the process risk envelope.
-3. **Correlate kLa to P/V for scale-up prediction.** There are empirical correlations (e.g., van't Riet) that relate kLa to power input per unit volume and superficial gas velocity. Putting that in would let you predict kLa at pilot scale from agitator geometry and power draw, making the scale-up risk assessment much more concrete.
-4. **Validate against lab data.** The model parameters are currently literature-based estimates. Fitting k1, k2, and kLa to actual concentration-time profiles from a lab run would tell you whether the model is capturing the real chemistry and give you more confidence in the scale-up predictions.
+- **No temperature dynamics.** Adding an Arrhenius equation and a heat balance would let me explore the cooling capacity versus selectivity tradeoff, which is important for a real exothermic step.
+- **No Monte Carlo analysis.** My one-at-a-time sweeps miss parameter interactions. Drawing k1, k2, and kLa from distributions and propagating uncertainty would give a probability of failure rather than a point estimate.
+- **kLa not linked to reactor geometry.** If I used a van't Riet correlation to predict kLa from P/V and superficial gas velocity, the scale-up risk assessment would be much more concrete — I could actually predict kLa at pilot scale from the agitator design.
+- **No experimental validation.** The rate constants are estimates. Fitting to lab concentration-time data would tell me whether the model is capturing the real chemistry.

@@ -111,8 +111,9 @@ def plot_design_space(n_points=8):
             risk_grid[i, j] = risk_map[risk]
 
     plt.rcParams.update({'font.size': 11})
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    fig.suptitle('Operating Window — kLa vs Feed Rate\n(Design Space Analysis)', fontsize=13, fontweight='bold')
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    fig.suptitle('Operating Window — kLa vs Feed Rate (Design Space Analysis)',
+                 fontsize=13, fontweight='bold')
 
     KK, FF = np.meshgrid(feed_values, kla_values)
 
@@ -122,7 +123,7 @@ def plot_design_space(n_points=8):
     axes[0].set_xlabel('Feed Rate (L/min)')
     axes[0].set_ylabel('kLa (1/min)')
     axes[0].set_title('Substrate Conversion')
-    axes[0].text(0.03, 1.3, '--- 95% target', fontsize=8, color='black')
+    axes[0].text(0.10, 1.38, '– – 95% target', fontsize=8, color='black')
 
     im1 = axes[1].contourf(FF, KK, imp_grid, levels=10, cmap='RdYlGn_r', vmin=0.0, vmax=0.3)
     axes[1].contour(FF, KK, imp_grid, levels=[0.05], colors='black', linewidths=1.5, linestyles='--')
@@ -140,9 +141,9 @@ def plot_design_space(n_points=8):
     axes[2].set_ylabel('kLa (1/min)')
     axes[2].set_title('Overall Risk Rating')
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.subplots_adjust(left=0.06, right=0.97, bottom=0.13, top=0.88, wspace=0.45)
     path = os.path.join(FIGURES_DIR, 'design_space.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.savefig(path, dpi=150)
     print(f'Saved: {path}')
     plt.close()
 
